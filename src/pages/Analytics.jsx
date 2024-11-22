@@ -41,7 +41,7 @@ function Analytics() {
           },
           {
             headers: {
-              Authorization: ``, // Replace with your OpenAI API key
+              //Authorization: ``, // Replace with your OpenAI API key
               'Content-Type': 'application/json',
             },
           }

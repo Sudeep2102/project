@@ -41,7 +41,7 @@ function Analytics() {
           },
           {
             headers: {
-              Authorization: `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`, // Replace with your OpenAI API key
+              Authorization: `API KEY`, // Replace with your OpenAI API key
               'Content-Type': 'application/json',
             },
           }

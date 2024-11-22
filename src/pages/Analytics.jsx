@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import axios from 'axios';
 import {
   BarChart,
   Bar,
@@ -12,242 +13,247 @@ import {
   Pie,
   Cell,
 } from 'recharts';
+import environmentalData from './data.json';
 
 function Analytics() {
-  const [timeframe, setTimeframe] = useState('monthly');
+  const [timeframe, setTimeframe] = useState('all');
   const [filterType, setFilterType] = useState('all');
+  const [suggestions, setSuggestions] = useState([]);
 
-  // Monthly data
-  const monthlyData = [
-    { name: 'Jan', emissions: 4000, energy: 2400, waste: 2400 },
-    { name: 'Feb', emissions: 3000, energy: 1398, waste: 2210 },
-    { name: 'Mar', emissions: 2000, energy: 9800, waste: 2290 },
-    { name: 'Apr', emissions: 2780, energy: 3908, waste: 2000 },
-    { name: 'May', emissions: 1890, energy: 4800, waste: 2181 },
-    { name: 'Jun', emissions: 2390, energy: 3800, waste: 2500 },
-  ];
+  // Fetch suggestions from OpenAI API
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      const summary = calculateSummary();
+      const prompt = `
+        Based on the following environmental metrics, suggest practical ways to reduce emissions, energy consumption, and waste. 
+        Provide up to 3 recommendations with a title, description, and impact (low, medium, high):
+        - Average Emissions: ${summary.emissions} kg CO2e
+        - Average Energy Consumption: ${summary.energy} kWh
+        - Average Waste Consumption: ${summary.waste} kg.
+      `;
+      try {
+        const response = await axios.post(
+          'https://api.openai.com/v1/completions',
+          {
+            model: 'text-davinci-003',
+            prompt: prompt,
+            max_tokens: 150,
+          },
+          {
+            headers: {
+              Authorization: `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`, // Replace with your OpenAI API key
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+        // Parse suggestions from the response
+        const output = response.data.choices[0].text.trim();
+        const parsedSuggestions = output
+          .split('\n')
+          .filter((line) => line.trim() !== '')
+          .map((line) => {
+            const [title, description] = line.split(':');
+            return {
+              title: title.trim(),
+              description: description.trim(),
+              impact: 'medium', // Assume medium for this example
+            };
+          });
+        setSuggestions(parsedSuggestions);
+      } catch (error) {
+        console.error('Error fetching suggestions:', error);
+        // Use fallback suggestions in case of an error
+        setSuggestions([
+          {
+            title: 'Reduce Manufacturing Emissions',
+            description: 'Upgrade equipment efficiency to lower emissions.',
+            impact: 'low',
+          },
+          {
+            title: 'Optimize Energy Usage',
+            description: 'Implementing smart lighting systems to save energy.',
+            impact: 'medium',
+          },
+          {
+            title: 'Improve Waste Management',
+            description: 'Review waste segregation to improve recycling rates.',
+            impact: 'high',
+          },
+        ]);
+      }
+    };
 
-  // Yearly data
-  const yearlyData = [
-    { name: '2020', emissions: 48000, energy: 29000, waste: 29000 },
-    { name: '2021', emissions: 46000, energy: 32000, waste: 30000 },
-    { name: '2022', emissions: 50000, energy: 31000, waste: 27000 },
-    { name: '2023', emissions: 49000, energy: 30000, waste: 28000 },
-  ];
+    fetchSuggestions();
+  }, []);
 
-  const data = timeframe === 'monthly' ? monthlyData : yearlyData;
+  // Process data for yearly averages
+  const yearlyAverages = environmentalData.reduce((acc, item) => {
+    const year = item['Year of reporting'];
+    if (!acc[year]) {
+      acc[year] = {
+        year,
+        emissions: 0,
+        energy: 0,
+        waste: 0,
+        count: 0,
+      };
+    }
+    acc[year].emissions += item["Product's carbon footprint (PCF, kg CO2e)"];
+    acc[year].energy += item["Energy Consumption (kWh)"];
+    acc[year].waste += item["Waste Consumption (kg)"];
+    acc[year].count += 1;
+    return acc;
+  }, {});
 
-  const pieData = [
-    { name: 'Manufacturing', value: 400 },
-    { name: 'Transportation', value: 300 },
-    { name: 'Office', value: 200 },
-    { name: 'Other', value: 100 },
-  ];
+  // Convert to array and calculate averages
+  const yearlyData = Object.values(yearlyAverages)
+    .map((item) => ({
+      name: item.year.toString(),
+      emissions: Math.round(item.emissions / item.count),
+      energy: Math.round(item.energy / item.count),
+      waste: Math.round(item.waste / item.count),
+    }))
+    .sort((a, b) => a.name - b.name);
 
-  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
+  // Calculate emissions by company type
+  const companyEmissions = environmentalData.reduce((acc, item) => {
+    const company = item.Company;
+    acc[company] = (acc[company] || 0) + item["Product's carbon footprint (PCF, kg CO2e)"];
+    return acc;
+  }, {});
 
-  const governmentCriteria = {
-    emissions: 3000, // Emissions should be below this value
-    energy: 2500, // Energy usage should be below this value
-    waste: 2000, // Waste should be below this value
-  };
+  // Convert to pie chart data format and get top 5 companies
+  const pieData = Object.entries(companyEmissions)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 5);
 
-  // Calculate summary
+  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
+
+  // Calculate summary statistics
   const calculateSummary = () => {
-    const average = (key) =>
-      data.reduce((sum, entry) => sum + entry[key], 0) / data.length;
-
-    const emissionsAvg = average('emissions');
-    const energyAvg = average('energy');
-    const wasteAvg = average('waste');
+    const average = (key) => {
+      const sum = environmentalData.reduce((acc, item) => {
+        switch (key) {
+          case 'emissions':
+            return acc + item["Product's carbon footprint (PCF, kg CO2e)"];
+          case 'energy':
+            return acc + item["Energy Consumption (kWh)"];
+          case 'waste':
+            return acc + item["Waste Consumption (kg)"];
+          default:
+            return acc;
+        }
+      }, 0);
+      return Math.round(sum / environmentalData.length);
+    };
 
     return {
-      emissions: {
-        value: emissionsAvg,
-        meetsCriteria: emissionsAvg <= governmentCriteria.emissions,
-      },
-      energy: {
-        value: energyAvg,
-        meetsCriteria: energyAvg <= governmentCriteria.energy,
-      },
-      waste: {
-        value: wasteAvg,
-        meetsCriteria: wasteAvg <= governmentCriteria.waste,
-      },
+      emissions: average('emissions'),
+      energy: average('energy'),
+      waste: average('waste'),
     };
   };
 
   const summary = calculateSummary();
 
-  const recommendations = [
-    {
-      title: 'Reduce Manufacturing Emissions',
-      description:
-        'Current emissions are 15% above industry standard. Consider upgrading equipment efficiency.',
-      impact: summary.emissions.meetsCriteria ? 'low' : 'high',
-    },
-    {
-      title: 'Optimize Energy Usage',
-      description:
-        'Implementing smart lighting systems could reduce energy consumption by 25%.',
-      impact: summary.energy.meetsCriteria ? 'low' : 'medium',
-    },
-    {
-      title: 'Waste Management',
-      description:
-        'Current recycling rate is 45%. Industry leaders achieve 75%. Review waste segregation processes.',
-      impact: summary.waste.meetsCriteria ? 'low' : 'medium',
-    },
-  ];
-
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="md:flex md:items-center md:justify-between">
-        <div className="flex-1 min-w-0">
-          <h2 className="text-2xl font-bold leading-7 text-gray-900 sm:text-3xl sm:truncate">
-            Analytics
-          </h2>
-        </div>
-        <div className="mt-4 flex md:mt-0 md:ml-4 space-x-3">
-          <select
-            value={timeframe}
-            onChange={(e) => setTimeframe(e.target.value)}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            <option value="monthly">Monthly</option>
-            <option value="yearly">Yearly</option>
-          </select>
-          <select
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value)}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            <option value="all">All Metrics</option>
-            <option value="emissions">Emissions</option>
-            <option value="energy">Energy</option>
-            <option value="waste">Waste</option>
-          </select>
-        </div>
+        <h2 className="text-2xl font-bold text-gray-900 sm:text-3xl">Environmental Analytics Dashboard</h2>
+        <select
+          value={filterType}
+          onChange={(e) => setFilterType(e.target.value)}
+          className="mt-4 md:mt-0 inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+        >
+          <option value="all">All Metrics</option>
+          <option value="emissions">Emissions</option>
+          <option value="energy">Energy</option>
+          <option value="waste">Waste</option>
+        </select>
       </div>
 
-      <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2">
-        <div className="bg-white shadow rounded-lg p-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">
-            Environmental Metrics Trend
-          </h3>
-          <div style={{ height: '400px' }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                {filterType === 'all' || filterType === 'emissions' ? (
-                  <Bar dataKey="emissions" fill="#3B82F6" />
-                ) : null}
-                {filterType === 'all' || filterType === 'energy' ? (
-                  <Bar dataKey="energy" fill="#10B981" />
-                ) : null}
-                {filterType === 'all' || filterType === 'waste' ? (
-                  <Bar dataKey="waste" fill="#F59E0B" />
-                ) : null}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+      <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="bg-white p-6 shadow rounded-lg">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Yearly Environmental Metrics</h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={yearlyData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              {filterType === 'all' || filterType === 'emissions' ? (
+                <Bar dataKey="emissions" fill="#3B82F6" name="Carbon Footprint (kg CO2e)" />
+              ) : null}
+              {filterType === 'all' || filterType === 'energy' ? (
+                <Bar dataKey="energy" fill="#10B981" name="Energy (kWh)" />
+              ) : null}
+              {filterType === 'all' || filterType === 'waste' ? (
+                <Bar dataKey="waste" fill="#F59E0B" name="Waste (kg)" />
+              ) : null}
+            </BarChart>
+          </ResponsiveContainer>
         </div>
 
-        <div className="bg-white shadow rounded-lg p-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">
-            Emissions by Source
-          </h3>
-          <div style={{ height: '400px' }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  outerRadius={150}
-                  fill="#8884d8"
-                  dataKey="value"
-                  label={({ name, percent }) =>
-                    `${name} ${(percent * 100).toFixed(0)}%`
-                  }
-                >
-                  {pieData.map((entry, index) => (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={COLORS[index % COLORS.length]}
-                    />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-8">
-        <div className="bg-white shadow rounded-lg p-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Summary</h3>
-          <div className="space-y-2">
-            <p>
-              <strong>Emissions:</strong>{' '}
-              {summary.emissions.value.toFixed(2)}{' '}
-              {summary.emissions.meetsCriteria
-                ? '(Meets criteria)'
-                : '(Above criteria)'}
-            </p>
-            <p>
-              <strong>Energy:</strong> {summary.energy.value.toFixed(2)}{' '}
-              {summary.energy.meetsCriteria
-                ? '(Meets criteria)'
-                : '(Above criteria)'}
-            </p>
-            <p>
-              <strong>Waste:</strong> {summary.waste.value.toFixed(2)}{' '}
-              {summary.waste.meetsCriteria
-                ? '(Meets criteria)'
-                : '(Above criteria)'}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-8">
-        <div className="bg-white shadow rounded-lg p-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">
-            Recommendations
-          </h3>
-          <div className="space-y-4">
-            {recommendations.map((rec) => (
-              <div
-                key={rec.title}
-                className="border-l-4 border-blue-500 bg-blue-50 p-4"
+        <div className="bg-white p-6 shadow rounded-lg">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Top 5 Companies by Carbon Footprint</h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie
+                data={pieData}
+                cx="50%"
+                cy="50%"
+                labelLine={false}
+                outerRadius={100}
+                fill="#8884d8"
+                dataKey="value"
+                label={({ name, value }) => `${name} (${value.toFixed(1)} kg CO2e)`}
               >
-                <div className="flex justify-between">
-                  <h4 className="text-base font-medium text-blue-800">
-                    {rec.title}
-                  </h4>
-                  <span
-                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      rec.impact === 'high'
-                        ? 'bg-red-100 text-red-800'
-                        : rec.impact === 'medium'
-                        ? 'bg-yellow-100 text-yellow-800'
-                        : 'bg-green-100 text-green-800'
-                    }`}
-                  >
-                    {rec.impact} impact
-                  </span>
-                </div>
-                <p className="mt-1 text-sm text-blue-700">{rec.description}</p>
-              </div>
-            ))}
+                {pieData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="mt-8">
+        <div className="bg-white p-6 shadow rounded-lg">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Summary Statistics</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-blue-50 p-4 rounded-lg">
+              <h4 className="text-blue-800 font-medium">Average Carbon Footprint</h4>
+              <p className="text-2xl font-bold text-blue-900">{summary.emissions.toLocaleString()} kg CO2e</p>
+            </div>
+            <div className="bg-green-50 p-4 rounded-lg">
+              <h4 className="text-green-800 font-medium">Average Energy Consumption</h4>
+              <p className="text-2xl font-bold text-green-900">{summary.energy.toLocaleString()} kWh</p>
+            </div>
+            <div className="bg-yellow-50 p-4 rounded-lg">
+              <h4 className="text-yellow-800 font-medium">Average Waste Production</h4>
+              <p className="text-2xl font-bold text-yellow-900">{summary.waste.toLocaleString()} kg</p>
+            </div>
           </div>
+        </div>
+      </div>
+
+      <div className="mt-8">
+        <div className="bg-white p-6 shadow rounded-lg">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Suggested Improvements</h3>
+          <ul className="list-disc pl-5">
+            {suggestions.map((suggestion, index) => (
+              <li key={index} className="mb-4">
+                <h4 className="font-bold text-lg">{suggestion.title}</h4>
+                <p className="text-sm text-gray-700">{suggestion.description}</p>
+                <span className="text-xs font-medium text-gray-500">
+                  Impact: {suggestion.impact.toUpperCase()}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     </div>
